@@ -1,6 +1,8 @@
 name: WordPress Bug Bounty Automation
 
 on:
+  schedule: 
+   
   workflow_dispatch:
     inputs:
       domains_file:
