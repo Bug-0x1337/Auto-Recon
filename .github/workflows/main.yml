@@ -1,28 +1,9 @@
-name: WordPress Bug Bounty Automation
+name: Update EPG Dat
 
 on:
-  schedule: 
-   
+  schedule:
+    - cron: '0 * * * *'   # run every hour
   workflow_dispatch:
-    inputs:
-      domains_file:
-        description: 'Path to domains file'
-        required: true
-        default: 'targets/domains.txt'
-      wildcards_file:
-        description: 'Path to wildcards file'
-        required: true
-        default: 'targets/wildcards.txt'
-      plugin_name:
-        description: 'Specific plugin to hunt for'
-        required: false
-      theme_name:
-        description: 'Specific theme to hunt for'
-        required: false
-      cve_template:
-        description: 'Specific CVE template to run'
-        required: false
-        default: 'CVE-2023-XXXXX'
 
 jobs:
   wordpress-hunter:
@@ -31,9 +12,17 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpcap-dev
+        
+        # Verify libpcap is installed
+        dpkg -L libpcap-dev | grep pcap.h || true
+
     - name: Install required tools
       run: |
-        # Install Go
+        # Show Go version (preinstalled on ubuntu-latest)
         go version
         
         # Install security tools
@@ -101,215 +90,3 @@ jobs:
         
         # Create WordPress detection template if it doesn't exist
         cat > wordpress-detection.yaml << 'EOL'
-id: wordpress-detection
-
-info:
-  name: WordPress Detection
-  author: pdteam
-  severity: info
-  description: Detects WordPress CMS
-
-http:
-  - method: GET
-    path:
-      - "{{BaseURL}}"
-      - "{{BaseURL}}/wp-admin"
-      - "{{BaseURL}}/wp-login.php"
-
-    matchers-condition: and
-    matchers:
-      - type: word
-        part: body
-        words:
-          - "wp-content"
-          - "wp-includes"
-        condition: or
-
-      - type: word
-        part: header
-        words:
-          - "wp-admin"
-          - "wordpress"
-        condition: or
-
-      - type: status
-        status:
-          - 200
-EOL
-
-        # Run nuclei template for WordPress detection
-        nuclei -l scan_results/live_urls.txt -t wordpress-detection.yaml -o scan_results/wordpress_sites.txt -silent
-        
-        # Extract just the URLs
-        cat scan_results/wordpress_sites.txt | awk '{print $1}' | sort -u > scan_results/wordpress_urls.txt
-        
-        echo "wordpress_count=$(wc -l < scan_results/wordpress_urls.txt)" >> $GITHUB_OUTPUT
-        echo "Found $(wc -l < scan_results/wordpress_urls.txt) WordPress sites"
-
-    - name: Find specific plugins and themes
-      id: plugin_theme_detect
-      run: |
-        echo "🎯 Hunting for specific plugins and themes..."
-        
-        # Create dynamic templates based on user input
-        TEMPLATE_DIR="custom-templates"
-        mkdir -p $TEMPLATE_DIR
-        
-        # Plugin detection template
-        if [ -n "${{ github.event.inputs.plugin_name }}" ]; then
-          cat > $TEMPLATE_DIR/plugin-detection.yaml << EOL
-id: plugin-detection
-
-info:
-  name: Plugin Detection - ${{ github.event.inputs.plugin_name }}
-  author: bug-bounty
-  severity: info
-
-http:
-  - method: GET
-    path:
-      - "{{BaseURL}}/wp-content/plugins/${{ github.event.inputs.plugin_name }}/"
-      - "{{BaseURL}}/wp-content/plugins/${{ github.event.inputs.plugin_name }}/readme.txt"
-
-    matchers-condition: and
-    matchers:
-      - type: status
-        status:
-          - 200
-      - type: word
-        words:
-          - "${{ github.event.inputs.plugin_name }}"
-          - "Version"
-        condition: or
-EOL
-        fi
-
-        # Theme detection template
-        if [ -n "${{ github.event.inputs.theme_name }}" ]; then
-          cat > $TEMPLATE_DIR/theme-detection.yaml << EOL
-id: theme-detection
-
-info:
-  name: Theme Detection - ${{ github.event.inputs.theme_name }}
-  author: bug-bounty
-  severity: info
-
-http:
-  - method: GET
-    path:
-      - "{{BaseURL}}/wp-content/themes/${{ github.event.inputs.theme_name }}/"
-      - "{{BaseURL}}/wp-content/themes/${{ github.event.inputs.theme_name }}/style.css"
-
-    matchers-condition: and
-    matchers:
-      - type: status
-        status:
-          - 200
-      - type: word
-        words:
-          - "${{ github.event.inputs.theme_name }}"
-          - "Theme Name"
-        condition: or
-EOL
-        fi
-
-        # Run detection templates
-        if [ -n "${{ github.event.inputs.plugin_name }}" ] || [ -n "${{ github.event.inputs.theme_name }}" ]; then
-          nuclei -l scan_results/wordpress_urls.txt -t $TEMPLATE_DIR/ -o scan_results/plugin_theme_targets.txt -silent
-          
-          # Extract target URLs
-          cat scan_results/plugin_theme_targets.txt | awk '{print $1}' | sort -u > scan_results/vulnerable_targets.txt
-          echo "target_count=$(wc -l < scan_results/vulnerable_targets.txt)" >> $GITHUB_OUTPUT
-          echo "Found $(wc -l < scan_results/vulnerable_targets.txt) targets with specified plugins/themes"
-        else
-          # If no specific plugin/theme, use all WordPress sites
-          cp scan_results/wordpress_urls.txt scan_results/vulnerable_targets.txt
-          echo "target_count=$(wc -l < scan_results/vulnerable_targets.txt)" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Run CVE vulnerability scanning
-      id: cve_scan
-      run: |
-        echo "💥 Running CVE vulnerability scan..."
-        
-        # Run general WordPress vulnerability templates
-        nuclei -l scan_results/vulnerable_targets.txt -t http/wordpress/ -o scan_results/wordpress_vulnerabilities.txt -silent
-        
-        # Run specific CVE template if provided
-        if [ -n "${{ github.event.inputs.cve_template }}" ]; then
-          echo "Running specific CVE template: ${{ github.event.inputs.cve_template }}"
-          nuclei -l scan_results/vulnerable_targets.txt -t "${{ github.event.inputs.cve_template }}" -o scan_results/specific_cve_results.txt -silent
-        fi
-        
-        # Count findings
-        echo "vuln_count=$(wc -l < scan_results/wordpress_vulnerabilities.txt 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
-        echo "cve_count=$(wc -l < scan_results/specific_cve_results.txt 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
-
-    - name: Generate final report
-      run: |
-        echo "📊 BUG BOUNTY SCAN REPORT" > scan_results/final_report.md
-        echo "==========================" >> scan_results/final_report.md
-        echo "" >> scan_results/final_report.md
-        echo "## Scan Summary" >> scan_results/final_report.md
-        echo "- **Domains Loaded**: $(wc -l < ${{ github.event.inputs.domains_file }})" >> scan_results/final_report.md
-        echo "- **Subdomains Discovered**: ${{ steps.subdomain_discovery.outputs.subdomain_count }}" >> scan_results/final_report.md
-        echo "- **Live Hosts Found**: ${{ steps.live_hosts.outputs.live_host_count }}" >> scan_results/final_report.md
-        echo "- **WordPress Sites**: ${{ steps.wordpress_detect.outputs.wordpress_count }}" >> scan_results/final_report.md
-        echo "- **Targets with Specified Plugin/Theme**: ${{ steps.plugin_theme_detect.outputs.target_count }}" >> scan_results/final_report.md
-        echo "- **Vulnerabilities Found**: ${{ steps.cve_scan.outputs.vuln_count }}" >> scan_results/final_report.md
-        echo "- **CVE Specific Findings**: ${{ steps.cve_scan.outputs.cve_count }}" >> scan_results/final_report.md
-        echo "" >> scan_results/final_report.md
-        
-        echo "## WordPress Sites Found" >> scan_results/final_report.md
-        if [ -s scan_results/wordpress_urls.txt ]; then
-          echo "\`\`\`" >> scan_results/final_report.md
-          cat scan_results/wordpress_urls.txt >> scan_results/final_report.md
-          echo "\`\`\`" >> scan_results/final_report.md
-        else
-          echo "No WordPress sites found." >> scan_results/final_report.md
-        fi
-        echo "" >> scan_results/final_report.md
-        
-        echo "## Vulnerable Targets" >> scan_results/final_report.md
-        if [ -s scan_results/vulnerable_targets.txt ]; then
-          echo "\`\`\`" >> scan_results/final_report.md
-          cat scan_results/vulnerable_targets.txt >> scan_results/final_report.md
-          echo "\`\`\`" >> scan_results/final_report.md
-        else
-          echo "No vulnerable targets found." >> scan_results/final_report.md
-        fi
-        echo "" >> scan_results/final_report.md
-        
-        echo "## Vulnerability Results" >> scan_results/final_report.md
-        if [ -s scan_results/wordpress_vulnerabilities.txt ]; then
-          echo "### General WordPress Vulnerabilities" >> scan_results/final_report.md
-          echo "\`\`\`" >> scan_results/final_report.md
-          cat scan_results/wordpress_vulnerabilities.txt >> scan_results/final_report.md
-          echo "\`\`\`" >> scan_results/final_report.md
-        fi
-        
-        if [ -s scan_results/specific_cve_results.txt ]; then
-          echo "### Specific CVE Results (${{ github.event.inputs.cve_template }})" >> scan_results/final_report.md
-          echo "\`\`\`" >> scan_results/final_report.md
-          cat scan_results/specific_cve_results.txt >> scan_results/final_report.md
-          echo "\`\`\`" >> scan_results/final_report.md
-        fi
-
-    - name: Upload scan results
-      uses: actions/upload-artifact@v4
-      with:
-        name: bug-bounty-results
-        path: |
-          scan_results/
-        retention-days: 30
-
-    - name: Print completion summary
-      run: |
-        echo "🎯 SCAN COMPLETED SUCCESSFULLY!"
-        echo "================================="
-        echo "WordPress sites: ${{ steps.wordpress_detect.outputs.wordpress_count }}"
-        echo "Targets with plugin/theme: ${{ steps.plugin_theme_detect.outputs.target_count }}"
-        echo "Vulnerabilities found: ${{ steps.cve_scan.outputs.vuln_count }}"
-        echo "CVE findings: ${{ steps.cve_scan.outputs.cve_count }}"
-        echo ""
-        echo "Results saved to bug-bounty-results artifact"
