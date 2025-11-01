@@ -47,13 +47,14 @@ jobs:
       - name: Run download worker with inputs
         run: |
           cd autorun
-          python3 download-worker.py --min ${{ inputs.min_installs }} --max ${{ inputs.max_installs }}
+          echo "Running with min=${{ github.event.inputs.min_installs }} max=${{ github.event.inputs.max_installs }}"
+          python3 download-worker.py --min "${{ github.event.inputs.min_installs }}" --max "${{ github.event.inputs.max_installs }}"
 
       - name: Upload plugin zips
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: plugins-${{ inputs.min_installs }}-${{ inputs.max_installs }}
+          name: plugins-${{ github.event.inputs.min_installs }}-${{ github.event.inputs.max_installs }}
           path: autorun/plugins/*.zip
 
       - name: Upload report
