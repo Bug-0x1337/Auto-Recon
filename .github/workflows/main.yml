@@ -9,11 +9,11 @@ on:
       min_installs:
         description: "Minimum installs"
         required: false
-        default: "1000"
+        default: "100000"
       max_installs:
         description: "Maximum installs"
         required: false
-        default: "5000"
+        default: "500000"
 
 jobs:
   build:
@@ -45,8 +45,8 @@ jobs:
           cd autorun
           MIN=${{ github.event.inputs.min_installs }}
           MAX=${{ github.event.inputs.max_installs }}
-          if [ -z "$MIN" ]; then MIN=1000; fi
-          if [ -z "$MAX" ]; then MAX=5000; fi
+          if [ -z "$MIN" ]; then MIN=100000; fi
+          if [ -z "$MAX" ]; then MAX=500000; fi
           echo " Running download-worker.py with min=$MIN max=$MAX"
           python3 download-worker.py --min "$MIN" --max "$MAX"
 
