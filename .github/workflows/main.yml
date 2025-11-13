@@ -1,4 +1,4 @@
-name: Download, Extract & Scan WordPress Plugins 
+name: Download, Extract & Scan WordPress Plugin
 
 on:
   push:
